@@ -39,7 +39,7 @@ def get_args():
     args.add_argument('-o', '--origin', dest='origin', required=False,
                       help='Specify the origin. Optional, if not provided origin will be determined')
 
-    args.add_argument('-p', '--ptr', dest='do_ptr', action='store_true',
+    args.add_argument('-p', '--ptr', dest='ptr', action='store_true', default=False,
                       help='Also modify the PTR for a given A or AAAA record. Forward and reverse zones must be on the same server.')
 
     args.add_argument('-v', '--verbose', dest='verbose', action='store_true',
@@ -62,13 +62,13 @@ def get_args():
     update_parser.add_argument('type', help='Type of the to be changed record: A, PTR, CNAME, ...')
     update_parser.add_argument('target',
                                help='FQDN or IP address of the target')
-    add_parser.set_defaults(func=update)
+    update_parser.set_defaults(func=update)
 
     delete_parser = subparsers.add_parser('delete', help='Delete an entry')
     delete_parser.add_argument('hostname', help='Hostname to remove')
     delete_parser.add_argument('type', help='Type to remove')
     delete_parser.add_argument('target', help='Target to remove')
-    add_parser.set_defaults(func=delete)
+    delete_parser.set_defaults(func=delete)
 
     my_args = args.parse_args()
     return my_args
@@ -101,7 +101,7 @@ def is_valid_ptr(ptr):
 def is_validv4_addr(Address):
     try:
         dns.ipv4.inet_aton(Address)
-    except socket.error:
+    except:
         print('Error:', Address, 'is not a valid IPv4 address')
         return False
     return True
@@ -116,18 +116,28 @@ def is_validv6_addr(Address):
     return True
 
 
-def is_valid_name(Name):
-    if re.match(r'^(([a-zA-Z0-9]|[a-zA-Z0-9\_][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z]|[A-Za-z][A-Za-z0-9\-]*[A-Za-z0-9]\.?)$', Name):
+def is_resolvable(host):
+    try:
+        socket.gethostbyname(host)
+    except:
+        print('Error:', host, 'is not a valid FQDN')
+        return False
+    return True
+
+
+def is_valid_name(fqdn):
+    is_valid = re.match("^(([a-zA-Z]|[a-zA-Z][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z]|[A-Za-z][A-Za-z0-9\-]*[A-Za-z0-9])[.]?$", fqdn)
+
+    if is_valid is not None:
         return True
     else:
-        print('Error:', Name, 'is not a valid name')
         return False
 
 
 # mainly interested in A, CNAME and PTR records
-def add(key, algo, args):
+def add(key, args):
     origin, hostname = parse_name(args.origin, args.hostname)
-    fqdn = hostname + '.' + origin
+    fqdn = hostname + "." + origin
     ttl = get_ttl(args.ttl)
 
     if args.type == 'PTR':
@@ -140,8 +150,13 @@ def add(key, algo, args):
 
         __add(origin, hostname, args.target, ttl, args.type, args.server, key)
 
-    if args.type == 'CNAME' and is_valid_name(args.target):
-            raise Exception("Target of CNAME is not a valid FQDN: %s" % args.target)
+    if args.type == 'CNAME':
+        if not is_valid_name(fqdn):
+            raise Exception("FQDN is not valid: %s" % fqdn)
+        if not is_resolvable(args.target):
+            raise Exception("Target of CNAME is not resolvable: %s" % args.target)
+
+        __add(origin, hostname, args.target, ttl, args.type, args.server, key)
 
     if args.type == 'A':
         if not is_validv4_addr(args.target):
@@ -220,7 +235,7 @@ def parse_name(origin, hostname):
     if origin is None:
         origin = dns.resolver.zone_for_name(n)
         hostname = n.relativize(origin)
-        return origin, hostname
+        return origin.to_text(), hostname.to_text()
     else:
         try:
             origin = dns.name.from_text(origin)
@@ -228,7 +243,7 @@ def parse_name(origin, hostname):
             print('Error:',  hostname, 'is not a valid origin')
             exit()
         hostname = n - origin
-        return origin, hostname
+        return origin.to_text(), hostname
 
 
 def doUpdate(args):
@@ -309,15 +324,20 @@ def main():
         VERBOSE = True
         print(args)
 
-    if not is_valid_name(args.server) or not is_validv4_addr(args.server):
+    if not is_resolvable(args.server) and not is_validv4_addr(args.server):
         print("The server argument is neither a valid FQDN nor a valid IPv4 address")
         exit(-1)
 
     try:
         key = get_key(args.key)
-        args.func(key, args)
+
+        if hasattr(args, 'func'):
+            args.func(key, args)
+        else:
+            print("You need to supply a command to execute: add, update, del")
     except Exception as error:
         print("Error occured:", error)
+        raise error
         exit(-1)
 
 main()
