@@ -182,6 +182,7 @@ def delete(key, args):
 
 
 def __delete(origin, hostname, server, key):
+    print("Removing origin: %s hostname: %s" % (origin, hostname))
     update = dns.update.Update(origin, keyring=key)
     update.delete(hostname)
     run_update(update, server)
